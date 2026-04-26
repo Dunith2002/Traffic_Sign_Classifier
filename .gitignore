@@ -1,0 +1,16 @@
+# Virtual Environment
+tsr_env/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+
+# Training data
+data/
+# Unused app files
+streamlit_app.py

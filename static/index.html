@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🚦 Traffic Sign Detector</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d0d0d;
+      color: #eee;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 { margin-bottom: 16px; color: #00ff88; font-size: 1.6rem; }
+
+    /* Stack video and canvas perfectly on top of each other */
+    #camera-wrapper {
+      position: relative;
+      width: 640px;
+      height: 480px;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 0 30px rgba(0,255,136,0.2);
+    }
+    #video, #overlay-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #overlay-canvas { pointer-events: none; }
+
+    #result-box {
+      margin-top: 20px;
+      width: 640px;
+      background: #1a1a2e;
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid #333;
+      min-height: 100px;
+    }
+    .detected { border-color: #00ff88 !important; }
+    .low-conf  { border-color: #ffaa00 !important; }
+
+    #main-label {
+      font-size: 1.4rem;
+      font-weight: bold;
+      color: #00ff88;
+      margin-bottom: 8px;
+    }
+    #confidence-bar-wrap {
+      background: #333;
+      border-radius: 20px;
+      height: 10px;
+      margin: 8px 0 16px;
+      overflow: hidden;
+    }
+    #confidence-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #00ff88, #00ccff);
+      border-radius: 20px;
+      transition: width 0.3s ease;
+    }
+    #top3 { display: flex; flex-direction: column; gap: 6px; }
+    .top3-item {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      color: #aaa;
+    }
+    .top3-item span:last-child { color: #ccc; }
+    #status {
+      font-size: 0.85rem;
+      color: #888;
+      margin-top: 8px;
+    }
+    #start-btn {
+      margin-top: 12px;
+      padding: 10px 28px;
+      background: #00ff88;
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #start-btn:hover { background: #00cc70; }
+  </style>
+</head>
+<body>
+  <h1>🚦 Traffic Sign Recognition</h1>
+
+  <div id="camera-wrapper">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay-canvas"></canvas>
+  </div>
+
+  <button id="start-btn">▶ Start Camera</button>
+
+  <div id="result-box">
+    <div id="main-label">Waiting for detection...</div>
+    <div id="confidence-bar-wrap">
+      <div id="confidence-bar"></div>
+    </div>
+    <div id="top3"></div>
+    <div id="status">Camera not started.</div>
+  </div>
+
+  <script>
+    const video       = document.getElementById('video');
+    const canvas      = document.getElementById('overlay-canvas');
+    const ctx         = canvas.getContext('2d');
+    const startBtn    = document.getElementById('start-btn');
+    const resultBox   = document.getElementById('result-box');
+    const mainLabel   = document.getElementById('main-label');
+    const confBar     = document.getElementById('confidence-bar');
+    const top3Div     = document.getElementById('top3');
+    const statusDiv   = document.getElementById('status');
+
+    // Capture canvas (hidden, for sending frames to backend)
+    const captureCanvas = document.createElement('canvas');
+    captureCanvas.width  = 48; // Send small image — faster + matches model input
+    captureCanvas.height = 48;
+    const captureCtx = captureCanvas.getContext('2d');
+
+    let predictionInterval = null;
+    let lastResult = null;
+    let isRequesting = false;
+
+    // --- Draw green box + label every animation frame ---
+    function drawOverlay() {
+      canvas.width  = video.videoWidth  || 640;
+      canvas.height = video.videoHeight || 480;
+
+      const cx = canvas.width  / 2;
+      const cy = canvas.height / 2;
+      const BOX = 220; // Match your OpenCV app
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Green glowing ROI box
+      ctx.strokeStyle = '#00ff88';
+      ctx.lineWidth   = 3;
+      ctx.shadowColor = '#00ff88';
+      ctx.shadowBlur  = 12;
+      ctx.strokeRect(cx - BOX/2, cy - BOX/2, BOX, BOX);
+
+      // Corner accents (like a real scanner UI)
+      ctx.shadowBlur = 0;
+      const CORNER = 20;
+      ctx.lineWidth  = 5;
+      const x1 = cx - BOX/2, y1 = cy - BOX/2;
+      const x2 = cx + BOX/2, y2 = cy + BOX/2;
+      [[x1,y1,1,1],[x2,y1,-1,1],[x1,y2,1,-1],[x2,y2,-1,-1]].forEach(([x,y,dx,dy]) => {
+        ctx.beginPath();
+        ctx.moveTo(x + dx*CORNER, y);
+        ctx.lineTo(x, y);
+        ctx.lineTo(x, y + dy*CORNER);
+        ctx.stroke();
+      });
+
+      // Label above box
+      ctx.font      = 'bold 14px Segoe UI';
+      ctx.fillStyle = '#00ff88';
+      ctx.textAlign = 'center';
+      ctx.fillText('ALIGN SIGN HERE', cx, y1 - 10);
+
+      // If we have a result, draw it on the video
+      if (lastResult && lastResult.detected) {
+        ctx.font      = 'bold 16px Segoe UI';
+        ctx.fillStyle = '#00ff88';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          `${lastResult.label} (${lastResult.confidence}%)`,
+          cx, y1 - 30
+        );
+      }
+
+      requestAnimationFrame(drawOverlay);
+    }
+
+    // --- Capture the ROI and POST to FastAPI ---
+    async function sendFrameForPrediction() {
+      if (isRequesting || video.readyState < 2) return;
+      isRequesting = true;
+
+      // Calculate ROI on actual video dimensions
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      const BOX = 220;
+      const sx = vw/2 - BOX/2;
+      const sy = vh/2 - BOX/2;
+
+      // Draw only the ROI region into the 48x48 capture canvas
+      captureCtx.drawImage(video, sx, sy, BOX, BOX, 0, 0, 48, 48);
+
+      captureCanvas.toBlob(async (blob) => {
+        try {
+          const formData = new FormData();
+          formData.append('file', blob, 'roi.jpg');
+
+          const res  = await fetch('/predict', { method: 'POST', body: formData });
+          const data = await res.json();
+          lastResult = data;
+          updateUI(data);
+        } catch (e) {
+          statusDiv.textContent = 'Server error. Is the backend running?';
+        } finally {
+          isRequesting = false;
+        }
+      }, 'image/jpeg', 0.85);
+    }
+
+    // --- Update the result panel ---
+    function updateUI(data) {
+      if (data.detected) {
+        resultBox.className = 'detected';
+        mainLabel.textContent = `✅ ${data.label}`;
+        mainLabel.style.color = '#00ff88';
+      } else {
+        resultBox.className = 'low-conf';
+        mainLabel.textContent = '⚠️ Low confidence — adjust sign position';
+        mainLabel.style.color = '#ffaa00';
+      }
+
+      confBar.style.width = `${data.confidence}%`;
+      confBar.style.background = data.confidence > 80
+        ? 'linear-gradient(90deg, #00ff88, #00ccff)'
+        : 'linear-gradient(90deg, #ffaa00, #ff6600)';
+
+      top3Div.innerHTML = data.top3.map(item => `
+        <div class="top3-item">
+          <span>${item.label}</span>
+          <span>${item.confidence}%</span>
+        </div>
+      `).join('');
+
+      statusDiv.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+    }
+
+    // --- Start camera ---
+    startBtn.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'environment' }
+        });
+        video.srcObject = stream;
+        await video.play();
+
+        startBtn.style.display = 'none';
+        statusDiv.textContent  = 'Camera active — scanning every 500ms';
+
+        requestAnimationFrame(drawOverlay);
+        // Send a frame every 500ms — same concept as your frame_count % 10
+        predictionInterval = setInterval(sendFrameForPrediction, 500);
+      } catch (err) {
+        statusDiv.textContent = `Camera error: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html>

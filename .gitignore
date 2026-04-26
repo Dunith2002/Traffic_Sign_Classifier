@@ -12,5 +12,8 @@ __pycache__/
 
 # Training data
 data/
+training/data.npy
+training/target.npy
 # Unused app files
 streamlit_app.py
+

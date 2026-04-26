@@ -2,268 +2,735 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
   <title>🚦 Traffic Sign Detector</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --green: #00ff88;
+      --green-dim: rgba(0,255,136,0.15);
+      --green-glow: rgba(0,255,136,0.4);
+      --amber: #ffaa00;
+      --red: #ff4444;
+      --bg: #080c10;
+      --surface: #0e1419;
+      --surface2: #151d25;
+      --border: rgba(0,255,136,0.15);
+      --text: #c8d8e8;
+      --text-dim: #5a7080;
+      --mono: 'Share Tech Mono', monospace;
+      --sans: 'Exo 2', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
     body {
-      background: #0d0d0d;
-      color: #eee;
-      font-family: 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      min-height: 100dvh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      min-height: 100vh;
-      padding: 20px;
+      padding: 0;
+      overflow-x: hidden;
     }
-    h1 { margin-bottom: 16px; color: #00ff88; font-size: 1.6rem; }
 
-    /* Stack video and canvas perfectly on top of each other */
-    #camera-wrapper {
-      position: relative;
-      width: 640px;
-      height: 480px;
-      border-radius: 12px;
-      overflow: hidden;
-      box-shadow: 0 0 30px rgba(0,255,136,0.2);
+    /* Scanline background effect */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,255,136,0.015) 2px,
+        rgba(0,255,136,0.015) 4px
+      );
+      pointer-events: none;
+      z-index: 0;
     }
-    #video, #overlay-canvas {
-      position: absolute;
-      top: 0; left: 0;
+
+    .app-wrapper {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      min-height: 100dvh;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── HEADER ── */
+    header {
+      padding: 16px 20px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: rgba(8,12,16,0.9);
+      backdrop-filter: blur(10px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      border: 2px solid var(--green);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      box-shadow: 0 0 10px var(--green-glow);
+    }
+
+    .logo-text {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--green);
+      line-height: 1.2;
+    }
+
+    .logo-text span {
+      display: block;
+      color: var(--text-dim);
+      font-size: 10px;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: all 0.3s;
+    }
+
+    .status-dot.active {
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse-dot 2s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── CAMERA SECTION ── */
+    .camera-section {
+      position: relative;
+      width: 100%;
+      background: #000;
+      aspect-ratio: 4/3;
+      overflow: hidden;
+    }
+
+    #video {
       width: 100%;
       height: 100%;
+      object-fit: cover;
+      display: block;
     }
-    #overlay-canvas { pointer-events: none; }
 
-    #result-box {
-      margin-top: 20px;
-      width: 640px;
-      background: #1a1a2e;
-      border-radius: 12px;
-      padding: 20px;
-      border: 1px solid #333;
-      min-height: 100px;
+    #overlay-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
     }
-    .detected { border-color: #00ff88 !important; }
-    .low-conf  { border-color: #ffaa00 !important; }
 
-    #main-label {
-      font-size: 1.4rem;
-      font-weight: bold;
-      color: #00ff88;
-      margin-bottom: 8px;
+    /* Start screen overlay */
+    .start-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(8,12,16,0.97);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      transition: opacity 0.4s;
     }
-    #confidence-bar-wrap {
-      background: #333;
-      border-radius: 20px;
-      height: 10px;
-      margin: 8px 0 16px;
+
+    .start-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .camera-icon-wrap {
+      width: 80px;
+      height: 80px;
+      border: 2px solid var(--border);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .camera-icon-wrap::before {
+      content: '';
+      position: absolute;
+      inset: -8px;
+      border-radius: 50%;
+      border: 1px solid var(--green-dim);
+    }
+
+    .camera-icon-wrap svg {
+      width: 36px;
+      height: 36px;
+      stroke: var(--text-dim);
+    }
+
+    .start-overlay p {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-dim);
+      text-align: center;
+      max-width: 220px;
+      line-height: 1.6;
+    }
+
+    #start-btn {
+      background: var(--green);
+      color: #000;
+      border: none;
+      border-radius: 10px;
+      padding: 14px 36px;
+      font-family: var(--sans);
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      box-shadow: 0 0 20px var(--green-glow);
+      transition: all 0.2s;
+      -webkit-appearance: none;
+    }
+
+    #start-btn:active {
+      transform: scale(0.96);
+      box-shadow: 0 0 10px var(--green-glow);
+    }
+
+    /* ── RESULT PANEL ── */
+    .result-panel {
+      flex: 1;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Main detection card */
+    .detection-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      transition: border-color 0.3s, box-shadow 0.3s;
+      position: relative;
       overflow: hidden;
     }
+
+    .detection-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--green);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .detection-card.detected {
+      border-color: rgba(0,255,136,0.4);
+      box-shadow: 0 0 20px rgba(0,255,136,0.08);
+    }
+
+    .detection-card.detected::before { opacity: 1; }
+
+    .detection-card.low-conf {
+      border-color: rgba(255,170,0,0.4);
+    }
+
+    .detection-card.low-conf::before {
+      background: var(--amber);
+      opacity: 1;
+    }
+
+    .card-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    #main-label {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 12px;
+      line-height: 1.3;
+      transition: color 0.3s;
+      min-height: 26px;
+    }
+
+    #main-label.detected { color: var(--green); }
+    #main-label.low-conf { color: var(--amber); }
+
+    /* Confidence bar */
+    .conf-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+
+    .conf-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    .conf-track {
+      flex: 1;
+      height: 6px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
     #confidence-bar {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #00ff88, #00ccff);
-      border-radius: 20px;
-      transition: width 0.3s ease;
+      border-radius: 10px;
+      background: linear-gradient(90deg, var(--green), #00ddff);
+      transition: width 0.4s ease, background 0.3s;
     }
-    #top3 { display: flex; flex-direction: column; gap: 6px; }
+
+    #confidence-bar.low {
+      background: linear-gradient(90deg, var(--amber), #ff6600);
+    }
+
+    #conf-value {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text);
+      min-width: 38px;
+      text-align: right;
+    }
+
+    /* Top 3 */
+    .top3-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+    }
+
+    .top3-card .card-label {
+      margin-bottom: 10px;
+    }
+
+    #top3 {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
     .top3-item {
       display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .top3-rank {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      width: 16px;
+      flex-shrink: 0;
+    }
+
+    .top3-name {
+      font-size: 12px;
+      color: var(--text);
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .top3-bar-wrap {
+      width: 60px;
+      height: 4px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 4px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .top3-bar {
+      height: 100%;
+      border-radius: 4px;
+      background: rgba(0,255,136,0.4);
+    }
+
+    .top3-pct {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      min-width: 36px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    /* Status bar */
+    .status-bar {
+      display: flex;
+      align-items: center;
       justify-content: space-between;
-      font-size: 0.85rem;
-      color: #aaa;
+      padding: 8px 16px 16px;
     }
-    .top3-item span:last-child { color: #ccc; }
+
     #status {
-      font-size: 0.85rem;
-      color: #888;
-      margin-top: 8px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
     }
-    #start-btn {
-      margin-top: 12px;
-      padding: 10px 28px;
-      background: #00ff88;
-      color: #000;
-      border: none;
-      border-radius: 8px;
-      font-size: 1rem;
-      font-weight: bold;
-      cursor: pointer;
+
+    #fps-counter {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
     }
-    #start-btn:hover { background: #00cc70; }
+
+    /* Scanning animation line */
+    .scan-line {
+      position: absolute;
+      left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--green), transparent);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .scan-line.active {
+      animation: scan 2s linear infinite;
+      opacity: 1;
+    }
+
+    @keyframes scan {
+      0%   { top: 0%; }
+      100% { top: 100%; }
+    }
   </style>
 </head>
 <body>
-  <h1>🚦 Traffic Sign Recognition</h1>
+<div class="app-wrapper">
 
-  <div id="camera-wrapper">
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🚦</div>
+      <div class="logo-text">
+        TSR DETECTOR
+        <span>v1.0 · GTSRB · 43 classes</span>
+      </div>
+    </div>
+    <div class="status-pill">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">OFFLINE</span>
+    </div>
+  </header>
+
+  <!-- Camera -->
+  <div class="camera-section">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay-canvas"></canvas>
-  </div>
+    <div class="scan-line" id="scan-line"></div>
 
-  <button id="start-btn">▶ Start Camera</button>
-
-  <div id="result-box">
-    <div id="main-label">Waiting for detection...</div>
-    <div id="confidence-bar-wrap">
-      <div id="confidence-bar"></div>
+    <div class="start-overlay" id="start-overlay">
+      <div class="camera-icon-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+      </div>
+      <p>Point your camera at a<br>traffic sign to identify it</p>
+      <button id="start-btn" onclick="startCamera()">START CAMERA</button>
     </div>
-    <div id="top3"></div>
-    <div id="status">Camera not started.</div>
   </div>
 
-  <script>
-    const video       = document.getElementById('video');
-    const canvas      = document.getElementById('overlay-canvas');
-    const ctx         = canvas.getContext('2d');
-    const startBtn    = document.getElementById('start-btn');
-    const resultBox   = document.getElementById('result-box');
-    const mainLabel   = document.getElementById('main-label');
-    const confBar     = document.getElementById('confidence-bar');
-    const top3Div     = document.getElementById('top3');
-    const statusDiv   = document.getElementById('status');
+  <!-- Results -->
+  <div class="result-panel">
 
-    // Capture canvas (hidden, for sending frames to backend)
-    const captureCanvas = document.createElement('canvas');
-    captureCanvas.width  = 48; // Send small image — faster + matches model input
-    captureCanvas.height = 48;
-    const captureCtx = captureCanvas.getContext('2d');
+    <div class="detection-card" id="detection-card">
+      <div class="card-label">DETECTION RESULT</div>
+      <div id="main-label">Waiting for scan...</div>
+      <div class="conf-row">
+        <span class="conf-label">CONF</span>
+        <div class="conf-track">
+          <div id="confidence-bar"></div>
+        </div>
+        <span id="conf-value">—</span>
+      </div>
+    </div>
 
-    let predictionInterval = null;
-    let lastResult = null;
-    let isRequesting = false;
+    <div class="top3-card">
+      <div class="card-label">TOP PREDICTIONS</div>
+      <div id="top3">
+        <div class="top3-item">
+          <span class="top3-rank">#1</span>
+          <span class="top3-name" style="color:var(--text-dim)">—</span>
+          <div class="top3-bar-wrap"><div class="top3-bar" style="width:0%"></div></div>
+          <span class="top3-pct">—</span>
+        </div>
+        <div class="top3-item">
+          <span class="top3-rank">#2</span>
+          <span class="top3-name" style="color:var(--text-dim)">—</span>
+          <div class="top3-bar-wrap"><div class="top3-bar" style="width:0%"></div></div>
+          <span class="top3-pct">—</span>
+        </div>
+        <div class="top3-item">
+          <span class="top3-rank">#3</span>
+          <span class="top3-name" style="color:var(--text-dim)">—</span>
+          <div class="top3-bar-wrap"><div class="top3-bar" style="width:0%"></div></div>
+          <span class="top3-pct">—</span>
+        </div>
+      </div>
+    </div>
 
-    // --- Draw green box + label every animation frame ---
-    function drawOverlay() {
-      canvas.width  = video.videoWidth  || 640;
-      canvas.height = video.videoHeight || 480;
+  </div>
 
-      const cx = canvas.width  / 2;
-      const cy = canvas.height / 2;
-      const BOX = 220; // Match your OpenCV app
+  <div class="status-bar">
+    <span id="status">Camera not started.</span>
+    <span id="fps-counter"></span>
+  </div>
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+</div>
 
-      // Green glowing ROI box
-      ctx.strokeStyle = '#00ff88';
-      ctx.lineWidth   = 3;
-      ctx.shadowColor = '#00ff88';
-      ctx.shadowBlur  = 12;
-      ctx.strokeRect(cx - BOX/2, cy - BOX/2, BOX, BOX);
+<script>
+  const video       = document.getElementById('video');
+  const canvas      = document.getElementById('overlay-canvas');
+  const ctx         = canvas.getContext('2d');
+  const startOverlay= document.getElementById('start-overlay');
+  const detCard     = document.getElementById('detection-card');
+  const mainLabel   = document.getElementById('main-label');
+  const confBar     = document.getElementById('confidence-bar');
+  const confValue   = document.getElementById('conf-value');
+  const top3Div     = document.getElementById('top3');
+  const statusEl    = document.getElementById('status');
+  const statusDot   = document.getElementById('status-dot');
+  const statusText  = document.getElementById('status-text');
+  const scanLine    = document.getElementById('scan-line');
 
-      // Corner accents (like a real scanner UI)
-      ctx.shadowBlur = 0;
-      const CORNER = 20;
-      ctx.lineWidth  = 5;
-      const x1 = cx - BOX/2, y1 = cy - BOX/2;
-      const x2 = cx + BOX/2, y2 = cy + BOX/2;
-      [[x1,y1,1,1],[x2,y1,-1,1],[x1,y2,1,-1],[x2,y2,-1,-1]].forEach(([x,y,dx,dy]) => {
-        ctx.beginPath();
-        ctx.moveTo(x + dx*CORNER, y);
-        ctx.lineTo(x, y);
-        ctx.lineTo(x, y + dy*CORNER);
-        ctx.stroke();
-      });
+  const captureCanvas = document.createElement('canvas');
+  captureCanvas.width  = 48;
+  captureCanvas.height = 48;
+  const captureCtx = captureCanvas.getContext('2d');
 
-      // Label above box
-      ctx.font      = 'bold 14px Segoe UI';
+  let isRequesting = false;
+  let lastResult   = null;
+  let frameId      = null;
+  const BOX_RATIO  = 0.55; // ROI box = 55% of the smaller dimension
+
+  function drawOverlay() {
+    const W = video.videoWidth  || canvas.offsetWidth;
+    const H = video.videoHeight || canvas.offsetHeight;
+
+    // Match canvas resolution to display size
+    const rect = canvas.getBoundingClientRect();
+    canvas.width  = rect.width  * devicePixelRatio;
+    canvas.height = rect.height * devicePixelRatio;
+    ctx.scale(devicePixelRatio, devicePixelRatio);
+
+    const dW = rect.width;
+    const dH = rect.height;
+
+    const cx = dW / 2;
+    const cy = dH / 2;
+    const BOX = Math.min(dW, dH) * BOX_RATIO;
+    const x1 = cx - BOX/2, y1 = cy - BOX/2;
+    const x2 = cx + BOX/2, y2 = cy + BOX/2;
+
+    ctx.clearRect(0, 0, dW, dH);
+
+    // Darken outside ROI
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, 0, dW, dH);
+    ctx.clearRect(x1, y1, BOX, BOX);
+
+    // Glow box
+    ctx.shadowColor = '#00ff88';
+    ctx.shadowBlur  = 16;
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(x1, y1, BOX, BOX);
+    ctx.shadowBlur  = 0;
+
+    // Corner brackets
+    const C = 18;
+    ctx.lineWidth  = 3;
+    ctx.strokeStyle= '#00ff88';
+    [
+      [x1, y1,  1,  1],
+      [x2, y1, -1,  1],
+      [x1, y2,  1, -1],
+      [x2, y2, -1, -1]
+    ].forEach(([x, y, dx, dy]) => {
+      ctx.beginPath();
+      ctx.moveTo(x + dx*C, y);
+      ctx.lineTo(x, y);
+      ctx.lineTo(x, y + dy*C);
+      ctx.stroke();
+    });
+
+    // Label above box
+    ctx.font      = `bold ${Math.max(11, dW * 0.028)}px 'Share Tech Mono', monospace`;
+    ctx.fillStyle = '#00ff88';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+    ctx.shadowBlur  = 4;
+    ctx.fillText('ALIGN SIGN HERE', cx, y1 - 10);
+    ctx.shadowBlur  = 0;
+
+    // Result overlay on video
+    if (lastResult && lastResult.detected) {
+      ctx.font      = `bold ${Math.max(12, dW * 0.032)}px 'Exo 2', sans-serif`;
       ctx.fillStyle = '#00ff88';
       ctx.textAlign = 'center';
-      ctx.fillText('ALIGN SIGN HERE', cx, y1 - 10);
+      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.shadowBlur  = 6;
 
-      // If we have a result, draw it on the video
-      if (lastResult && lastResult.detected) {
-        ctx.font      = 'bold 16px Segoe UI';
-        ctx.fillStyle = '#00ff88';
-        ctx.textAlign = 'center';
-        ctx.fillText(
-          `${lastResult.label} (${lastResult.confidence}%)`,
-          cx, y1 - 30
-        );
+      const txt = `✓ ${lastResult.label}`;
+      const maxW = BOX - 10;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x1, 0, BOX, y1 - 14);
+      ctx.clip();
+      ctx.fillText(txt, cx, y1 - 28, maxW);
+      ctx.restore();
+      ctx.shadowBlur = 0;
+    }
+
+    frameId = requestAnimationFrame(drawOverlay);
+  }
+
+  async function sendFrame() {
+    if (isRequesting || video.readyState < 2) return;
+    isRequesting = true;
+
+    // Use actual video dimensions for the source crop
+    const vW  = video.videoWidth;
+    const vH  = video.videoHeight;
+    const BOX = Math.min(vW, vH) * BOX_RATIO;
+    const sx  = vW/2 - BOX/2;
+    const sy  = vH/2 - BOX/2;
+
+    captureCtx.drawImage(video, sx, sy, BOX, BOX, 0, 0, 48, 48);
+
+    captureCanvas.toBlob(async (blob) => {
+      try {
+        const form = new FormData();
+        form.append('file', blob, 'roi.jpg');
+
+        const res  = await fetch('/predict', { method: 'POST', body: form });
+        const data = await res.json();
+        lastResult = data;
+        updateUI(data);
+      } catch (e) {
+        statusEl.textContent = 'Server error — is backend running?';
+      } finally {
+        isRequesting = false;
       }
+    }, 'image/jpeg', 0.85);
+  }
+
+  function updateUI(data) {
+    if (data.detected) {
+      detCard.className  = 'detection-card detected';
+      mainLabel.className= 'detected';
+      mainLabel.textContent = data.label;
+      confBar.className  = '';
+    } else {
+      detCard.className  = 'detection-card low-conf';
+      mainLabel.className= 'low-conf';
+      mainLabel.textContent = '⚠ Low confidence';
+      confBar.className  = 'low';
+    }
+
+    const pct = data.confidence;
+    confBar.style.width = `${pct}%`;
+    confValue.textContent = `${pct}%`;
+
+    // Top 3
+    const items = top3Div.querySelectorAll('.top3-item');
+    data.top3.forEach((item, i) => {
+      if (!items[i]) return;
+      items[i].querySelector('.top3-name').textContent = item.label;
+      items[i].querySelector('.top3-name').style.color = '';
+      items[i].querySelector('.top3-bar').style.width  = `${item.confidence}%`;
+      items[i].querySelector('.top3-pct').textContent  = `${item.confidence}%`;
+    });
+
+    statusEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+  }
+
+  async function startCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' }, // rear camera on mobile
+          width:  { ideal: 1280 },
+          height: { ideal: 960 }
+        }
+      });
+      video.srcObject = stream;
+      await video.play();
+
+      startOverlay.classList.add('hidden');
+      scanLine.classList.add('active');
+      statusDot.classList.add('active');
+      statusText.textContent = 'LIVE';
+      statusEl.textContent   = 'Scanning every 500ms…';
 
       requestAnimationFrame(drawOverlay);
+      setInterval(sendFrame, 500);
+
+    } catch (err) {
+      statusEl.textContent = `Camera error: ${err.message}`;
     }
-
-    // --- Capture the ROI and POST to FastAPI ---
-    async function sendFrameForPrediction() {
-      if (isRequesting || video.readyState < 2) return;
-      isRequesting = true;
-
-      // Calculate ROI on actual video dimensions
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      const BOX = 220;
-      const sx = vw/2 - BOX/2;
-      const sy = vh/2 - BOX/2;
-
-      // Draw only the ROI region into the 48x48 capture canvas
-      captureCtx.drawImage(video, sx, sy, BOX, BOX, 0, 0, 48, 48);
-
-      captureCanvas.toBlob(async (blob) => {
-        try {
-          const formData = new FormData();
-          formData.append('file', blob, 'roi.jpg');
-
-          const res  = await fetch('/predict', { method: 'POST', body: formData });
-          const data = await res.json();
-          lastResult = data;
-          updateUI(data);
-        } catch (e) {
-          statusDiv.textContent = 'Server error. Is the backend running?';
-        } finally {
-          isRequesting = false;
-        }
-      }, 'image/jpeg', 0.85);
-    }
-
-    // --- Update the result panel ---
-    function updateUI(data) {
-      if (data.detected) {
-        resultBox.className = 'detected';
-        mainLabel.textContent = `✅ ${data.label}`;
-        mainLabel.style.color = '#00ff88';
-      } else {
-        resultBox.className = 'low-conf';
-        mainLabel.textContent = '⚠️ Low confidence — adjust sign position';
-        mainLabel.style.color = '#ffaa00';
-      }
-
-      confBar.style.width = `${data.confidence}%`;
-      confBar.style.background = data.confidence > 80
-        ? 'linear-gradient(90deg, #00ff88, #00ccff)'
-        : 'linear-gradient(90deg, #ffaa00, #ff6600)';
-
-      top3Div.innerHTML = data.top3.map(item => `
-        <div class="top3-item">
-          <span>${item.label}</span>
-          <span>${item.confidence}%</span>
-        </div>
-      `).join('');
-
-      statusDiv.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-    }
-
-    // --- Start camera ---
-    startBtn.addEventListener('click', async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: 'environment' }
-        });
-        video.srcObject = stream;
-        await video.play();
-
-        startBtn.style.display = 'none';
-        statusDiv.textContent  = 'Camera active — scanning every 500ms';
-
-        requestAnimationFrame(drawOverlay);
-        // Send a frame every 500ms — same concept as your frame_count % 10
-        predictionInterval = setInterval(sendFrameForPrediction, 500);
-      } catch (err) {
-        statusDiv.textContent = `Camera error: ${err.message}`;
-      }
-    });
-  </script>
+  }
+</script>
 </body>
 </html>

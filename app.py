@@ -24,7 +24,16 @@ classes = {
     41:'End of no passing', 42:'End no passing veh > 3.5 tons' 
 }
 
-# 3. Initialize Webcam
+# 3. CLAHE setup — must match training preprocessing exactly
+clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+def apply_clahe(image_array):
+    """Apply CLAHE to each RGB channel — same as training pipeline."""
+    channels = cv2.split(image_array)
+    equalized = [clahe.apply(ch) for ch in channels]
+    return cv2.merge(equalized)
+
+# 4. Initialize Webcam
 cap = cv2.VideoCapture(0)
 window_name = "Real-Time Traffic Sign Recognition"
 
@@ -41,44 +50,40 @@ while True:
         break
 
     frame_count += 1
-    
+
     # Define ROI box
     height, width, _ = frame.shape
     box_size = 220
     x1, y1 = (width // 2 - box_size // 2), (height // 2 - box_size // 2)
     x2, y2 = (width // 2 + box_size // 2), (height // 2 + box_size // 2)
     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    
-    # --- PREPROCESSING & PREDICTION ---
+
+    # PREPROCESSING & PREDICTION 
     # Only run the heavy math every 10th frame
     if frame_count % 10 == 0:
         crop_img = frame[y1:y2, x1:x2]
-        
+
         if crop_img.size > 0:
-            # Prepare image for model
-            img_rgb = cv2.cvtColor(crop_img, cv2.COLOR_BGR2RGB)
-            img_pil = Image.fromarray(img_rgb).resize((48, 48))
-            # img_pil = Image.fromarray(img_rgb).resize((48, 48))
-            img_normalized = np.array(img_pil).astype('float32') / 255.0
-            img_batch = np.expand_dims(img_normalized, axis=0)
+            img_rgb     = cv2.cvtColor(crop_img, cv2.COLOR_BGR2RGB)        # BGR → RGB
+            img_resized = np.array(Image.fromarray(img_rgb).resize((64, 64)))  # resize
+            img_clahe   = apply_clahe(img_resized)                         # ✅ CLAHE
+            img_normalized = img_clahe.astype('float32') / 255.0           # normalize
+            img_batch   = np.expand_dims(img_normalized, axis=0)
 
             # Predict and store results
-            predictions = model.predict(img_batch, verbose=0) # verbose=0 silences the terminal logs
+            predictions = model.predict(img_batch, verbose=0)
             last_class_id = np.argmax(predictions, axis=-1)[0]
             last_confidence = np.max(predictions)
 
-    # --- DISPLAY LOGIC ---
-    # Use the results from the 'last' prediction to avoid flickering
+    # DISPLAY LOGIC 
     if last_confidence > 0.80:
         label_text = f"{classes[last_class_id]} ({round(last_confidence*100, 2)}%)"
-        cv2.putText(frame, label_text, (x1, y1 - 10), 
+        cv2.putText(frame, label_text, (x1, y1 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     cv2.imshow(window_name, frame)
 
-    # --- EXIT CONDITIONS ---
-    # 1. Press 'q' key
-    # 2. Click the 'X' button on the window
+    # EXIT CONDITIONS
     if cv2.waitKey(1) & 0xFF == ord('q') or cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
         break
 
